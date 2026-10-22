@@ -1,5 +1,7 @@
 #include "selfdrive/ui/qt/util.h"
 
+#include <algorithm>
+#include <cstdlib>
 #include <map>
 #include <string>
 #include <vector>
@@ -8,10 +10,13 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QHash>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLayoutItem>
+#include <QScreen>
+#include <QSize>
 #include <QStyleOption>
 #include <QPainterPath>
 #include <QTextStream>
@@ -20,6 +25,9 @@
 #include "common/swaglog.h"
 #include "common/util.h"
 #include "system/hardware/hw.h"
+
+// Keep in sync with DEVICE_SCREEN_SIZE in qt_window.h (avoid include cycle).
+static const QSize kDeviceScreenSize = {2160, 1080};
 
 QString getVersion() {
   static QString version =  QString::fromStdString(Params().get("Version"));
@@ -102,6 +110,32 @@ void sigTermHandler(int s) {
   qApp->quit();
 }
 
+namespace {
+
+// Fit 2160x1080 design into available screen. Uses physical pixels when HiDPI will be cancelled.
+float computeUiFitScale(QScreen *screen, qreal device_pixel_ratio) {
+  if (screen == nullptr) {
+    return 1.0f;
+  }
+  const QRect avail = screen->availableGeometry();
+  const float avail_w = avail.width() * static_cast<float>(device_pixel_ratio);
+  const float avail_h = avail.height() * static_cast<float>(device_pixel_ratio);
+  return std::min({avail_w / kDeviceScreenSize.width(),
+                   avail_h / kDeviceScreenSize.height(),
+                   1.0f});
+}
+
+float resolveUserScaleOrFit(float auto_fit) {
+  // SCALE unset or "auto" -> auto-fit; SCALE=<number> overrides (e.g. 0.75, 1)
+  const char *scale_env = std::getenv("SCALE");
+  if (scale_env == nullptr || std::string(scale_env) == "auto") {
+    return auto_fit;
+  }
+  return util::getenv("SCALE", auto_fit);
+}
+
+}  // namespace
+
 void initApp(int argc, char *argv[], bool disable_hidpi) {
   Hardware::set_display_power(true);
   Hardware::set_brightness(65);
@@ -111,16 +145,37 @@ void initApp(int argc, char *argv[], bool disable_hidpi) {
   std::signal(SIGTERM, sigTermHandler);
 
   QString app_dir;
+  float dpr_inv = 1.0f;
+  float fit = 1.0f;
+
 #ifdef __APPLE__
-  // Get the devicePixelRatio, and scale accordingly to maintain 1:1 rendering
+  // Temporary QApplication to read DPR / screen before the real app starts
   QApplication tmp(argc, argv);
   app_dir = QCoreApplication::applicationDirPath();
+  const qreal dpr = tmp.devicePixelRatio();
   if (disable_hidpi) {
-    qputenv("QT_SCALE_FACTOR", QString::number(1.0 / tmp.devicePixelRatio()).toLocal8Bit());
+    dpr_inv = static_cast<float>(1.0 / dpr);
+  }
+  if (Hardware::PC()) {
+    fit = resolveUserScaleOrFit(computeUiFitScale(tmp.primaryScreen(), disable_hidpi ? dpr : 1.0));
   }
 #else
   app_dir = QFileInfo(util::readlink("/proc/self/exe").c_str()).path();
+  if (Hardware::PC()) {
+    // Temporary app to query availableGeometry before QT_SCALE_FACTOR is applied
+    QGuiApplication tmp(argc, argv);
+    const qreal dpr = tmp.devicePixelRatio();
+    fit = resolveUserScaleOrFit(computeUiFitScale(tmp.primaryScreen(), dpr));
+  }
 #endif
+
+  // Effective scale: Mac HiDPI cancel * screen fit. Must be set before the real QApplication.
+  // UI_FIT_SCALE is informational (debug); live window drag uses ScaleHost::fitInView.
+  if (Hardware::PC() || (disable_hidpi && dpr_inv != 1.0f)) {
+    const float qt_scale = dpr_inv * fit;
+    qputenv("QT_SCALE_FACTOR", QString::number(static_cast<double>(qt_scale), 'g', 8).toLocal8Bit());
+    qputenv("UI_FIT_SCALE", QString::number(static_cast<double>(fit), 'g', 8).toLocal8Bit());
+  }
 
   qputenv("QT_DBL_CLICK_DIST", QByteArray::number(150));
   // ensure the current dir matches the exectuable's directory

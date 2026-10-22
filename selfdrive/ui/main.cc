@@ -29,8 +29,9 @@ int main(int argc, char *argv[]) {
   QApplication a(argc, argv);
   a.installTranslator(&translator);
 
-  MainWindow w;
-  setMainWindow(&w);
-  a.installEventFilter(&w);
+  // Heap-allocated: on PC, setMainWindow may reparent into ScaleHost which takes ownership
+  auto *w = new MainWindow;
+  setMainWindow(w);
+  a.installEventFilter(w);
   return a.exec();
 }
