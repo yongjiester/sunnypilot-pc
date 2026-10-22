@@ -55,7 +55,7 @@ QSize fittedWindowSize() {
 // so menus stay proportional without clipping the settings right panel.
 class ScaleHost : public QGraphicsView {
 public:
-  explicit ScaleHost(QWidget *content, bool is_dialog = false) {
+  explicit ScaleHost(QWidget *content) {
     setFrameShape(QFrame::NoFrame);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -79,33 +79,20 @@ public:
 
     setWindowTitle(content->windowTitle().isEmpty() ? QStringLiteral("ui") : content->windowTitle());
     setMinimumSize(640, 360);
+    resize(fittedWindowSize());
 
-    if (is_dialog && g_main != nullptr) {
-      resize(g_main->size());
-    } else {
-      resize(fittedWindowSize());
-    }
-
-    if (!is_dialog) {
-      g_main = this;
-    }
+    g_main = this;
+    g_content = content;
   }
 
   ~ScaleHost() override {
     if (g_main == this) {
       g_main = nullptr;
+      g_content = nullptr;
     }
   }
 
-  // QGraphicsProxyWidget owns the embedded widget; release before destroying host
-  // so stack-allocated QDialogs are not deleted.
-  void releaseContent() {
-    if (proxy_ != nullptr && proxy_->widget() != nullptr) {
-      proxy_->setWidget(nullptr);
-    }
-  }
-
-  static ScaleHost *mainHost() { return g_main; }
+  static QWidget *mainContent() { return g_content; }
 
 protected:
   void resizeEvent(QResizeEvent *event) override {
@@ -130,36 +117,45 @@ private:
 
   QGraphicsProxyWidget *proxy_ = nullptr;
   static ScaleHost *g_main;
+  static QWidget *g_content;
 };
 
 ScaleHost *ScaleHost::g_main = nullptr;
+QWidget *ScaleHost::g_content = nullptr;
 
-void showDialogHost(ScaleHost *host, QDialog *dialog) {
-  if (ScaleHost *main = ScaleHost::mainHost()) {
-    host->setGeometry(main->geometry());
+// Show dialog as a full-canvas overlay inside the existing ScaleHost content so it
+// scales with the main UI (no second window). Design size stays 2160x1080.
+void overlayDialogOnMain(QDialog *dialog) {
+  QWidget *root = ScaleHost::mainContent();
+  if (root == nullptr) {
+    dialog->setFixedSize(fittedWindowSize());
+    dialog->show();
+    return;
   }
-  host->setWindowModality(Qt::ApplicationModal);
-  QObject::connect(dialog, &QDialog::finished, host, [host]() {
-    host->releaseContent();
-    host->close();
-  });
-  host->show();
+
+  dialog->setParent(root, Qt::Widget);
+  dialog->setGeometry(root->rect());
+  dialog->show();
+  dialog->raise();
+  dialog->activateWindow();
 }
 
-int execDialogHost(QDialog *dialog) {
-  ScaleHost host(dialog, true);
-  if (ScaleHost *main = ScaleHost::mainHost()) {
-    host.setGeometry(main->geometry());
-  }
-  host.setWindowModality(Qt::ApplicationModal);
-  host.show();
+int execDialogOverlay(QDialog *dialog) {
+  QWidget *prev_parent = dialog->parentWidget();
+  const Qt::WindowFlags prev_flags = dialog->windowFlags();
+
+  overlayDialogOnMain(dialog);
 
   QEventLoop loop;
   QObject::connect(dialog, &QDialog::finished, &loop, &QEventLoop::quit);
   loop.exec();
 
   const int result = dialog->result();
-  host.releaseContent();
+  dialog->hide();
+  // Restore original parent for stack-allocated dialogs.
+  if (prev_parent != nullptr) {
+    dialog->setParent(prev_parent, prev_flags);
+  }
   return result;
 }
 
@@ -167,15 +163,12 @@ int execDialogHost(QDialog *dialog) {
 
 void setMainWindow(QWidget *w) {
   if (Hardware::PC()) {
-    // Main window and dialogs both use ScaleHost so shrink/resize keeps full UI
-    // (including InputDialog keyboard) visible via fitInView.
+    // Dialogs overlay the main ScaleHost canvas (same scale as settings/vehicle UI).
     if (auto *dialog = qobject_cast<QDialog *>(w)) {
-      auto *host = new ScaleHost(w, true);
-      host->setAttribute(Qt::WA_DeleteOnClose);
-      showDialogHost(host, dialog);
+      overlayDialogOnMain(dialog);
       return;
     }
-    auto *host = new ScaleHost(w, false);
+    auto *host = new ScaleHost(w);
     host->setAttribute(Qt::WA_DeleteOnClose);
     host->setAttribute(Qt::WA_QuitOnClose);
     host->show();
@@ -208,7 +201,7 @@ void setMainWindow(QWidget *w) {
 }
 
 int execPcDialog(QDialog *dialog) {
-  return execDialogHost(dialog);
+  return execDialogOverlay(dialog);
 }
 
 

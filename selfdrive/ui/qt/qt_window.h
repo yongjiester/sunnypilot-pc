@@ -21,5 +21,5 @@ const QSize DEVICE_SCREEN_SIZE = {2160, 1080};
 
 void setMainWindow(QWidget *w);
 
-// PC: show dialog inside ScaleHost (same fit as main window) and block until closed.
+// PC: overlay dialog on the main ScaleHost canvas and block until closed.
 int execPcDialog(QDialog *dialog);

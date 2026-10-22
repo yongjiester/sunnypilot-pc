@@ -170,10 +170,9 @@ void initApp(int argc, char *argv[], bool disable_hidpi) {
   }
 #endif
 
-  // UI_FIT_SCALE: initial ScaleHost size for main window and dialogs (SCALE= override).
-  // Must NOT go into QT_SCALE_FACTOR — combining global Qt scale with fitInView clips the
-  // right edge of settings (stylesheet px + proxy size disagree). Dialogs (e.g. keyboard)
-  // also use ScaleHost so they track the resized main window.
+  // UI_FIT_SCALE: initial ScaleHost window size (SCALE= override). Must NOT go into
+  // QT_SCALE_FACTOR — combining global Qt scale with fitInView clips the right edge of
+  // settings. Dialogs overlay the main canvas so the keyboard scales with the same view.
   if (Hardware::PC()) {
     qputenv("UI_FIT_SCALE", QString::number(static_cast<double>(fit), 'g', 8).toLocal8Bit());
   }

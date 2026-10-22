@@ -46,8 +46,8 @@ bool DialogBase::eventFilter(QObject *o, QEvent *e) {
 }
 
 int DialogBase::exec() {
-  // PC: ScaleHost letterboxes the 2160x1080 dialog (keyboard included) to the
-  // current main window size. Device: fullscreen fixed-size dialog as before.
+  // PC: overlay on the main ScaleHost canvas so keyboard scales with the UI
+  // (no second window). Device: fullscreen fixed-size dialog as before.
   if (Hardware::PC()) {
     return execPcDialog(this);
   }
