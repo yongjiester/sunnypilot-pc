@@ -12,6 +12,7 @@
 
 DialogBase::DialogBase(QWidget *parent) : QDialog(parent) {
   Q_ASSERT(parent != nullptr);
+  parent_filter_target = parent;
   parent->installEventFilter(this);
 
   setStyleSheet(R"(
@@ -38,13 +39,18 @@ DialogBase::DialogBase(QWidget *parent) : QDialog(parent) {
 }
 
 bool DialogBase::eventFilter(QObject *o, QEvent *e) {
-  if (o == parent() && e->type() == QEvent::Hide) {
+  if (o == parent_filter_target && e->type() == QEvent::Hide) {
     reject();
   }
   return QDialog::eventFilter(o, e);
 }
 
 int DialogBase::exec() {
+  // PC: ScaleHost letterboxes the 2160x1080 dialog (keyboard included) to the
+  // current main window size. Device: fullscreen fixed-size dialog as before.
+  if (Hardware::PC()) {
+    return execPcDialog(this);
+  }
   setMainWindow(this);
   return QDialog::exec();
 }

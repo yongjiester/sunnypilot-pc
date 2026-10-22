@@ -14,7 +14,12 @@
 
 #include "system/hardware/hw.h"
 
+class QDialog;
+
 const QString ASSET_PATH = ":/";
 const QSize DEVICE_SCREEN_SIZE = {2160, 1080};
 
 void setMainWindow(QWidget *w);
+
+// PC: show dialog inside ScaleHost (same fit as main window) and block until closed.
+int execPcDialog(QDialog *dialog);

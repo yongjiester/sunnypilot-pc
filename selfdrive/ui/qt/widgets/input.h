@@ -3,6 +3,7 @@
 #include <QDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPointer>
 #include <QString>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -17,6 +18,9 @@ class DialogBase : public QDialog {
 protected:
   DialogBase(QWidget *parent);
   bool eventFilter(QObject *o, QEvent *e) override;
+
+  // Kept across PC ScaleHost reparent (parent() becomes null when embedded).
+  QPointer<QWidget> parent_filter_target;
 
 public slots:
   int exec() override;

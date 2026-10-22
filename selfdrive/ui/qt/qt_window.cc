@@ -5,6 +5,7 @@
 #include <string>
 
 #include <QDialog>
+#include <QEventLoop>
 #include <QGraphicsProxyWidget>
 #include <QGraphicsScene>
 #include <QGraphicsView>
@@ -54,7 +55,7 @@ QSize fittedWindowSize() {
 // so menus stay proportional without clipping the settings right panel.
 class ScaleHost : public QGraphicsView {
 public:
-  explicit ScaleHost(QWidget *content) {
+  explicit ScaleHost(QWidget *content, bool is_dialog = false) {
     setFrameShape(QFrame::NoFrame);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -78,8 +79,33 @@ public:
 
     setWindowTitle(content->windowTitle().isEmpty() ? QStringLiteral("ui") : content->windowTitle());
     setMinimumSize(640, 360);
-    resize(fittedWindowSize());
+
+    if (is_dialog && g_main != nullptr) {
+      resize(g_main->size());
+    } else {
+      resize(fittedWindowSize());
+    }
+
+    if (!is_dialog) {
+      g_main = this;
+    }
   }
+
+  ~ScaleHost() override {
+    if (g_main == this) {
+      g_main = nullptr;
+    }
+  }
+
+  // QGraphicsProxyWidget owns the embedded widget; release before destroying host
+  // so stack-allocated QDialogs are not deleted.
+  void releaseContent() {
+    if (proxy_ != nullptr && proxy_->widget() != nullptr) {
+      proxy_->setWidget(nullptr);
+    }
+  }
+
+  static ScaleHost *mainHost() { return g_main; }
 
 protected:
   void resizeEvent(QResizeEvent *event) override {
@@ -103,23 +129,56 @@ private:
   }
 
   QGraphicsProxyWidget *proxy_ = nullptr;
+  static ScaleHost *g_main;
 };
+
+ScaleHost *ScaleHost::g_main = nullptr;
+
+void showDialogHost(ScaleHost *host, QDialog *dialog) {
+  if (ScaleHost *main = ScaleHost::mainHost()) {
+    host->setGeometry(main->geometry());
+  }
+  host->setWindowModality(Qt::ApplicationModal);
+  QObject::connect(dialog, &QDialog::finished, host, [host]() {
+    host->releaseContent();
+    host->close();
+  });
+  host->show();
+}
+
+int execDialogHost(QDialog *dialog) {
+  ScaleHost host(dialog, true);
+  if (ScaleHost *main = ScaleHost::mainHost()) {
+    host.setGeometry(main->geometry());
+  }
+  host.setWindowModality(Qt::ApplicationModal);
+  host.show();
+
+  QEventLoop loop;
+  QObject::connect(dialog, &QDialog::finished, &loop, &QEventLoop::quit);
+  loop.exec();
+
+  const int result = dialog->result();
+  host.releaseContent();
+  return result;
+}
 
 }  // namespace
 
 void setMainWindow(QWidget *w) {
   if (Hardware::PC()) {
-    // Dialogs stay top-level for QDialog::exec(); size them with UI_FIT_SCALE.
-    // Main window gets ScaleHost so the user can resize and keep uniform UI scale.
-    if (qobject_cast<QDialog *>(w) == nullptr) {
-      auto *host = new ScaleHost(w);
+    // Main window and dialogs both use ScaleHost so shrink/resize keeps full UI
+    // (including InputDialog keyboard) visible via fitInView.
+    if (auto *dialog = qobject_cast<QDialog *>(w)) {
+      auto *host = new ScaleHost(w, true);
       host->setAttribute(Qt::WA_DeleteOnClose);
-      host->setAttribute(Qt::WA_QuitOnClose);
-      host->show();
+      showDialogHost(host, dialog);
       return;
     }
-    w->setFixedSize(fittedWindowSize());
-    w->show();
+    auto *host = new ScaleHost(w, false);
+    host->setAttribute(Qt::WA_DeleteOnClose);
+    host->setAttribute(Qt::WA_QuitOnClose);
+    host->show();
     return;
   }
 
@@ -146,6 +205,10 @@ void setMainWindow(QWidget *w) {
   void *egl = native->nativeResourceForWindow("egldisplay", w->windowHandle());
   assert(egl != nullptr);
 #endif
+}
+
+int execPcDialog(QDialog *dialog) {
+  return execDialogHost(dialog);
 }
 
 
