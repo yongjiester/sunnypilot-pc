@@ -1,6 +1,7 @@
 #include "selfdrive/ui/qt/util.h"
 
 #include <algorithm>
+#include <csignal>
 #include <cstdlib>
 #include <map>
 #include <string>
@@ -157,6 +158,7 @@ void initApp(int argc, char *argv[], bool disable_hidpi) {
     dpr_inv = static_cast<float>(1.0 / dpr);
   }
   if (Hardware::PC()) {
+    // Pass physical pixels when HiDPI will be cancelled via QT_SCALE_FACTOR.
     fit = resolveUserScaleOrFit(computeUiFitScale(tmp.primaryScreen(), disable_hidpi ? dpr : 1.0));
   }
 #else
@@ -164,17 +166,20 @@ void initApp(int argc, char *argv[], bool disable_hidpi) {
   if (Hardware::PC()) {
     // Temporary app to query availableGeometry before QT_SCALE_FACTOR is applied
     QGuiApplication tmp(argc, argv);
-    const qreal dpr = tmp.devicePixelRatio();
-    fit = resolveUserScaleOrFit(computeUiFitScale(tmp.primaryScreen(), dpr));
+    fit = resolveUserScaleOrFit(computeUiFitScale(tmp.primaryScreen(), 1.0));
   }
 #endif
 
-  // Effective scale: Mac HiDPI cancel * screen fit. Must be set before the real QApplication.
-  // UI_FIT_SCALE is informational (debug); live window drag uses ScaleHost::fitInView.
-  if (Hardware::PC() || (disable_hidpi && dpr_inv != 1.0f)) {
-    const float qt_scale = dpr_inv * fit;
-    qputenv("QT_SCALE_FACTOR", QString::number(static_cast<double>(qt_scale), 'g', 8).toLocal8Bit());
+  // UI_FIT_SCALE: initial ScaleHost / dialog size (and SCALE= override). Must NOT go into
+  // QT_SCALE_FACTOR — combining global Qt scale with QGraphicsProxyWidget fitInView clips
+  // the right edge of settings (stylesheet px + proxy size disagree).
+  if (Hardware::PC()) {
     qputenv("UI_FIT_SCALE", QString::number(static_cast<double>(fit), 'g', 8).toLocal8Bit());
+  }
+
+  // QT_SCALE_FACTOR: Mac HiDPI cancel only. Screen fit is ScaleHost::fitInView.
+  if (disable_hidpi && dpr_inv != 1.0f) {
+    qputenv("QT_SCALE_FACTOR", QString::number(static_cast<double>(dpr_inv), 'g', 8).toLocal8Bit());
   }
 
   qputenv("QT_DBL_CLICK_DIST", QByteArray::number(150));

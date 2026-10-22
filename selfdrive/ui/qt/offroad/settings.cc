@@ -543,10 +543,12 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
 
   // main settings layout, sidebar + main panel
   QHBoxLayout *main_layout = new QHBoxLayout(this);
+  main_layout->setContentsMargins(0, 0, 0, 0);
+  main_layout->setSpacing(0);
 
   sidebar_widget->setFixedWidth(500);
   main_layout->addWidget(sidebar_widget);
-  main_layout->addWidget(panel_widget);
+  main_layout->addWidget(panel_widget, 1);
 
   setStyleSheet(R"(
     * {

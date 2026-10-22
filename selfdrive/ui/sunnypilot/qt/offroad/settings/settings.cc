@@ -141,6 +141,9 @@ SettingsWindowSP::SettingsWindowSP(QWidget *parent) : SettingsWindow(parent) {
 
   // main settings layout, sidebar + main panel
   QHBoxLayout *main_layout = new QHBoxLayout(this);
+  // Zero margins so sidebar(500) + panel fill the 2160 design width (no right-edge clip).
+  main_layout->setContentsMargins(0, 0, 0, 0);
+  main_layout->setSpacing(0);
 
   // add layout for close button
   sidebar_layout->addLayout(close_btn_layout);
@@ -151,7 +154,7 @@ SettingsWindowSP::SettingsWindowSP(QWidget *parent) : SettingsWindow(parent) {
 
   sidebar_widget->setFixedWidth(500);
   main_layout->addWidget(sidebar_widget);
-  main_layout->addWidget(panel_widget);
+  main_layout->addWidget(panel_widget, 1);
 
   setStyleSheet(R"(
     * {

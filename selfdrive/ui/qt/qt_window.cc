@@ -1,5 +1,6 @@
 #include "selfdrive/ui/qt/qt_window.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 
@@ -7,18 +8,50 @@
 #include <QGraphicsProxyWidget>
 #include <QGraphicsScene>
 #include <QGraphicsView>
+#include <QGuiApplication>
 #include <QPainter>
 #include <QResizeEvent>
+#include <QScreen>
 #include <QShowEvent>
 
 #include "common/util.h"
 
 namespace {
 
-// Resizable host that letterbox-scales a fixed 2160x1080 UI into the window.
-// QT_SCALE_FACTOR (set in initApp) already includes screen fit + Mac DPR cancel;
-// at the default DEVICE-sized window, fitInView scale is ~1.0. Resizing the window
-// scales the design uniformly so menus/fonts stay proportional.
+float uiFitScale() {
+  // Set by initApp (auto from availableGeometry, or SCALE= override). Fallback: fit now.
+  if (const char *env = std::getenv("UI_FIT_SCALE")) {
+    return std::strtof(env, nullptr);
+  }
+  if (QScreen *screen = QGuiApplication::primaryScreen()) {
+    const QRect avail = screen->availableGeometry();
+    return std::min({avail.width() / float(DEVICE_SCREEN_SIZE.width()),
+                     avail.height() / float(DEVICE_SCREEN_SIZE.height()),
+                     1.0f});
+  }
+  return 1.0f;
+}
+
+QSize fittedWindowSize() {
+  const float fit = uiFitScale();
+  QSize size(qRound(DEVICE_SCREEN_SIZE.width() * fit),
+             qRound(DEVICE_SCREEN_SIZE.height() * fit));
+
+  // Keep inside available geometry (title bar / taskbar), preserving 2:1 aspect.
+  if (QScreen *screen = QGuiApplication::primaryScreen()) {
+    const QRect avail = screen->availableGeometry();
+    constexpr int kFramePad = 64;
+    const QSize max_size(avail.width(), std::max(360, avail.height() - kFramePad));
+    if (size.width() > max_size.width() || size.height() > max_size.height()) {
+      size = DEVICE_SCREEN_SIZE.scaled(max_size, Qt::KeepAspectRatio);
+    }
+  }
+  return size;
+}
+
+// Letterbox-scales a fixed 2160x1080 UI into a resizable window.
+// QT_SCALE_FACTOR (initApp) is Mac DPR cancel only; this host owns screen/window fit
+// so menus stay proportional without clipping the settings right panel.
 class ScaleHost : public QGraphicsView {
 public:
   explicit ScaleHost(QWidget *content) {
@@ -39,31 +72,36 @@ public:
     content->setFixedSize(DEVICE_SCREEN_SIZE);
     content->setParent(nullptr);
     proxy_ = scene->addWidget(content);
-    scene->setSceneRect(proxy_->boundingRect());
+    // Clip any child paint that exceeds the design canvas (avoids right-edge bleed).
+    proxy_->setFlag(QGraphicsItem::ItemClipsChildrenToShape, true);
+    scene->setSceneRect(QRectF(QPointF(0, 0), QSizeF(DEVICE_SCREEN_SIZE)));
 
-    // Default size matches design; QT_SCALE_FACTOR already fitted it to the screen.
-    // Allow free resize so the user can grow/shrink; fitInView keeps aspect ratio.
     setWindowTitle(content->windowTitle().isEmpty() ? QStringLiteral("ui") : content->windowTitle());
     setMinimumSize(640, 360);
-    resize(DEVICE_SCREEN_SIZE);
+    resize(fittedWindowSize());
   }
 
 protected:
   void resizeEvent(QResizeEvent *event) override {
     QGraphicsView::resizeEvent(event);
-    if (proxy_ != nullptr) {
-      fitInView(proxy_, Qt::KeepAspectRatio);
-    }
+    refit();
   }
 
   void showEvent(QShowEvent *event) override {
     QGraphicsView::showEvent(event);
-    if (proxy_ != nullptr) {
-      fitInView(proxy_, Qt::KeepAspectRatio);
-    }
+    refit();
   }
 
 private:
+  void refit() {
+    if (proxy_ == nullptr || scene() == nullptr) {
+      return;
+    }
+    // Fit the fixed design rect (not proxy boundingRect alone) so the full 2160x1080
+    // canvas stays visible when the window is smaller than design size.
+    fitInView(scene()->sceneRect(), Qt::KeepAspectRatio);
+  }
+
   QGraphicsProxyWidget *proxy_ = nullptr;
 };
 
@@ -71,7 +109,7 @@ private:
 
 void setMainWindow(QWidget *w) {
   if (Hardware::PC()) {
-    // Dialogs stay top-level for QDialog::exec(); scaling comes from QT_SCALE_FACTOR.
+    // Dialogs stay top-level for QDialog::exec(); size them with UI_FIT_SCALE.
     // Main window gets ScaleHost so the user can resize and keep uniform UI scale.
     if (qobject_cast<QDialog *>(w) == nullptr) {
       auto *host = new ScaleHost(w);
@@ -80,7 +118,7 @@ void setMainWindow(QWidget *w) {
       host->show();
       return;
     }
-    w->setFixedSize(DEVICE_SCREEN_SIZE);
+    w->setFixedSize(fittedWindowSize());
     w->show();
     return;
   }
